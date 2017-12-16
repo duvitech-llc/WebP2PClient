@@ -1,0 +1,232 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+<h1>Intel<sup>&reg;</sup> Collaboration Suite for WebRTC</h1>
+<h2>P2P Direct Call Sample</h2>
+<div id="description">
+    <p>This sample works with the latest Chrome and FireFox.</p>
+</div>
+<div id="control">
+    <p><input id="uid" type="text" /><button id="login">Login</button><button id="logoff">Logoff</button></p>
+    <p>
+        <input id="target-uid" type="text" />
+        <button id="target-connect">Invite</button>
+        <button id="target-video-publish" disabled="true">Start Video Sharing</button>
+        <button id="target-video-unpublish" disabled="true">Stop Video Sharing</button>
+        <button id="target-screen" disabled="true">Share Screen</button>
+    </p>
+</div>
+<div id="sendreceive">
+    <div id="send">
+        <h2>Send data</h2>
+        <textarea id="dataSent" rows="5" cols="10"></textarea>
+    </div>
+    <div id="receive">
+        <h2>Received data</h2>
+        <textarea id="dataReceived" rows="5" cols="10" disabled="true"></textarea>
+    </div>
+    <button id="data-send">Send data</button>
+</div>
+<div id="videocontainer">
+    <div id="local">
+        <h2>LocalView</h2>
+        <video width="320px" height="240px" id="localVideo" playsinline muted autoplay></video>
+    </div>
+    <div id="remote">
+        <h2>RemoteView</h2>
+        <video width="320px" height="240px" id="remoteVideo" playsinline autoplay></video>
+    </div>
+    <div id="screen">
+        <h2>ScreenView</h2>
+        <video width="640px" height="480px" id="screenVideo" playsinline autoplay></video>
+    </div>
+</div>
+
+<footer id="status"></footer>
+<div id="infoDiv"></div>
+
+@section scripts {
+    <script src="~/js/utils.js" type="text/javascript"></script>
+    <script src="~/sdk/dependencies/socket.io.js" type="text/javascript"></script>
+    <script src="~/sdk/dependencies/adapter.js" type="text/javascript"></script>
+    <script src="~/js/sc.websocket.js" type="text/javascript"></script>
+    <script src="~/sdk/woogeen.sdk.js" type="text/javascript"></script>
+    <script type="text/javascript">
+        var isVideo = 1;
+        var serverAddress = 'http://192.168.1.47:8095';  // Please change example.com to signaling server's address.
+        var p2p = new Woogeen.PeerClient({
+            iceServers: [{
+                urls: "stun:example.com:3478"
+            }, {
+                urls: ["turn:example.com:3478?transport=udp",
+                    "turn:example.com:3478?transport=tcp"
+                ],
+                credential: "password",
+                username: "username"
+            }]
+        }); // Initialize a Peer object
+        var localStream;
+        var localScreen;
+
+        var getTargetId = function () {
+            return $('#target-uid').val();
+        };
+
+        $(document).ready(function () {
+            $('#target-connect').click(function () {
+                p2p.invite(getTargetId(), function () {
+                    console.log('Invite success.');
+                }, function (err) {
+                    console.log('Invite failed with message: ' + err.message);
+                });
+            });
+
+            $('#target-screen').click(function () {
+                Woogeen.LocalStream.create({
+                    audio: true,
+                    video: {
+                        device: "screen",
+                        extensionId: "pndohhifhheefbpeljcmnhnkphepimhe"
+                    }
+                }, function (err, stream) {
+                    if (err) {
+                        return L.Logger.error('create LocalStream failed:', err);
+                    }
+                    localScreen = stream;
+                    p2p.publish(localScreen, $('#target-uid').val()); // Publish local stream to remote client
+                });
+            });
+
+            $('#target-video-unpublish').click(function () {
+                $('#target-video-publish').prop('disabled', false);
+                $('#target-video-unpublish').prop('disabled', true);
+                p2p.unpublish(localStream, $('#target-uid').val()); // Publish local stream to remote client
+                localStream.close();
+                localStream = undefined;
+            });
+
+            $('#target-video-publish').click(function () {
+                $('#target-video-unpublish').prop('disabled', false);
+                $('#target-video-publish').prop('disabled', true);
+                if (localStream) {
+                    p2p.publish(localStream, $('#target-uid').val()); // Publish local stream to remote client
+                } else {
+                    Woogeen.LocalStream.create({
+                        video: {
+                            device: "camera",
+                            resolution: { width: 1280, height: 720 },
+                            frameRate: 24
+                        },
+                        audio: true
+                    }, function (err, stream) {
+                        if (err) {
+                            return L.Logger.error('create LocalStream failed:',
+                                err);
+                        }
+                        localStream = stream;
+                        $('#local').children('video').get(0).srcObject =
+                            localStream.mediaStream;
+                        p2p.publish(localStream, $('#target-uid').val()); // Publish local stream to remote client
+                    });
+                }
+            });
+
+            $('#target-disconnect').click(function () {
+                p2p.stop($('#target-uid').val()); // Stop chat
+            });
+
+            $('#login').click(function () {
+                p2p.connect({
+                    host: serverAddress,
+                    token: $('#uid').val()
+                }, function () {
+                    $('#uid').prop('disabled', true);
+                }); // Connect to peer server
+            });
+
+            $('#logoff').click(function () {
+                p2p.disconnect(); // Disconnected from peer server.
+                $('#uid').prop('disabled', false);
+            });
+
+            $('#data-send').click(function () {
+                p2p.send($('#dataSent').val(), $('#target-uid').val()); // Send data to peer.
+            });
+        });
+
+        p2p.on('chat-invited', function (e) { // Receive invitation from remote client.
+            $('#target-uid').val(e.senderId);
+            p2p.accept(getTargetId());
+            //p2p.deny(e.senderId);
+        });
+
+        p2p.on('chat-accepted', function (e) { });
+
+        p2p.on('chat-denied', function (e) {
+            console.log('Invitation to ' + e.senderId + ' has been denied.');
+        });
+
+        p2p.on('chat-started', function (e) { // Chat started
+            console.log('chat started.');
+            $('#target-screen').prop('disabled', false);
+            $('#data-send').prop('disabled', false);
+            $('#target-video-publish').prop('disabled', false);
+        });
+
+        p2p.on('stream-added', function (e) { // A remote stream is available.
+            if (e.stream.isScreen()) {
+                $('#screen video').show();
+                $('#screen video').get(0).srcObject = e.stream.mediaStream;
+                $('#screen video').get(0).play();
+            } else if (e.stream.hasVideo() || e.stream.hasAudio()) {
+                $('#remote video').show();
+                $('#remote video').get(0).srcObject = e.stream.mediaStream;
+                $('#remote video').get(0).play();
+            }
+            isVideo++;
+        });
+
+        p2p.on('stream-removed', function (e) { // A remote stream is available.
+            var stream = e.stream;
+            if (stream && stream.isScreen()) {
+                $("#screen video").hide();
+            } else {
+                $("#remote video").hide();
+            }
+            console.log('Stream removed. Stream ID: ' + e.stream.mediaStream.id);
+        });
+
+        p2p.on('chat-stopped', function (e) { // Chat stopped.
+            console.log('chat stopped.');
+            $('#data-send').prop('disabled', true);
+            $('#target-video-publish').prop('disabled', true);
+            $('#target-video-unpublish').prop('disabled', true);
+            $('#target-screen').prop('disabled', true);
+            $('#remote video').hide();
+            if (localStream) {
+                localStream.close();
+                localStream = undefined;
+            }
+            if (localScreen) {
+                localScreen.close();
+                localScreen = undefined;
+            }
+            console.log('Chat stopped. Sender ID: ' + e.senderId + ', peer ID: ' +
+                e.peerId);
+        });
+
+        p2p.on('data-received', function (e) { // Received data from datachannel.
+            $('#dataReceived').val(e.senderId + ': ' + e.data);
+        });
+
+        window.onbeforeunload = function () {
+            if (localStream) {
+                p2p.unpublish(localStream, $('#target-uid').val());
+                localStream.close();
+            }
+            p2p.stop($('#target-uid').val());
+        }
+    </script>
+}
